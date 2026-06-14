@@ -115,6 +115,17 @@ jobs:
           
           echo "skip_release=$SKIP_RELEASE" >> $GITHUB_OUTPUT
 
+      - name: Set release metadata
+        if: steps.check.outputs.skip_release == 'false'
+        id: meta
+        run: |
+          set -euo pipefail
+          RELEASE_NAME="v$(date +%Y.%m.%d)"
+          TAG="${RELEASE_NAME}.$(git rev-parse --short HEAD)"
+          echo "name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "::notice::Creating release: ${TAG}"
+
       - name: Git push assets to "release" branch
         if: steps.check.outputs.skip_release == 'false'
         run: |
@@ -124,17 +135,9 @@ jobs:
           git config user.email "${{ github.actor }}@users.noreply.github.com"
           git checkout -b release
           git add -A
-          git commit -m "${{ env.RELEASE_NAME }}"
+          git commit -m "${{ steps.meta.outputs.name }}"
           git remote add mmdb "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
           git push -f -u mmdb release
-
-      - name: Set release metadata
-        id: meta
-        run: |
-          set -euo pipefail
-          TAG="v$(date +%Y.%m.%d).$(git rev-parse --short HEAD)"
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "::notice::Creating release: ${TAG}"
 
       - name: Upload files to GitHub release
         if: steps.check.outputs.skip_release == 'false'
