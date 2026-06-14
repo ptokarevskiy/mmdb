@@ -121,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE_NAME="v$(date +%Y.%m.%d)"
-          TAG="${RELEASE_NAME}.$(git rev-parse --short HEAD)"
+          TAG="${RELEASE_NAME} $(git rev-parse --short HEAD)"
           echo "name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "::notice::Creating release: ${TAG}"
