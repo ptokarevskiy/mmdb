@@ -53,6 +53,7 @@ jobs:
 
       - name: Prepare GeoLite2 databases
         run: |
+          mkdir -p output
           cd ./tmp || exit 1
           tar -xvzf GeoLite2-Country.tar.gz
           tar -xvzf GeoLite2-ASN.tar.gz
