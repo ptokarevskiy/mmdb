@@ -47,23 +47,23 @@ jobs:
           LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE }}
         run: |
           set -euo pipefail
-          mkdir -p tmp
-          curl -sSfL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=${LICENSE_KEY}&suffix=tar.gz" -o ./tmp/GeoLite2-ASN.tar.gz
-          curl -sSfL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz" -o ./tmp/GeoLite2-Country.tar.gz
+          mkdir -p "$WORK_DIR"
+          curl -sSfL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=${LICENSE_KEY}&suffix=tar.gz" -o "$WORK_DIR/GeoLite2-ASN.tar.gz"
+          curl -sSfL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz" -o "$WORK_DIR/GeoLite2-Country.tar.gz"
 
       - name: Prepare GeoLite2 databases
         run: |
-          mkdir -p output
-          cd ./tmp || exit 1
+          mkdir -p "$OUTPUT_DIR"
+          cd "$WORK_DIR" || exit 1
           tar -xvzf GeoLite2-Country.tar.gz
           tar -xvzf GeoLite2-ASN.tar.gz
 
-          cp GeoLite2-Country_*/*.mmdb ./output/Country.mmdb
-          cp GeoLite2-ASN_*/*.mmdb ./output/Country-asn.mmdb
+          cp GeoLite2-Country_*/*.mmdb "$OUTPUT_DIR/Country.mmdb"
+          cp GeoLite2-ASN_*/*.mmdb "$OUTPUT_DIR/Country-asn.mmdb"
 
       - name: Verify mmdb files
         run: |
-          cd ./output || exit 1
+          cd "$OUTPUT_DIR" || exit 1
           go install -v github.com/maxmind/mmdbverify@v1.0.0
           for name in $(ls *.mmdb); do
             $(go env GOPATH)/bin/mmdbverify -file ${name}
@@ -73,7 +73,7 @@ jobs:
         id: checksums
         run: |
           set -euo pipefail
-          cd ./output || exit 1
+          cd "$OUTPUT_DIR" || exit 1
           
           sha256sum *.mmdb | tee $WORK_DIR/checksums.txt
           
@@ -102,10 +102,11 @@ jobs:
             LATEST=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
             
             # Download and extract previous checksums
-            if gh release download "$LATEST" --pattern "Country.mmdb.sha256sum" --dir /tmp 2>/dev/null; then
-              PREVIOUS_COUNTRY=$(cat /tmp/Country.mmdb.sha256sum | awk '{print $1}')
+            if gh release download "$LATEST" --pattern "Country.mmdb.sha256sum" --pattern "Country-asn.mmdb.sha256sum" --dir "$WORK_DIR" 2>/dev/null; then
+              PREVIOUS_COUNTRY=$(cat "$WORK_DIR/Country.mmdb.sha256sum" | awk '{print $1}')
+              PREVIOUS_ASN=$(cat "$WORK_DIR/Country-asn.mmdb.sha256sum" | awk '{print $1}')
               
-              if [[ "${{ steps.checksums.outputs.country }}" == "$PREVIOUS_COUNTRY" ]]; then
+              if [[ "${{ steps.checksums.outputs.country }}" == "$PREVIOUS_COUNTRY" ]] && [[ "${{ steps.checksums.outputs.asn }}" == "$PREVIOUS_ASN" ]]; then
                 echo "::notice::No changes detected. Skipping release."
                 SKIP_RELEASE="true"
               fi
@@ -117,7 +118,7 @@ jobs:
       - name: Git push assets to "release" branch
         if: steps.check.outputs.skip_release == 'false'
         run: |
-          cd output || exit 1
+          cd "$OUTPUT_DIR" || exit 1
           git init
           git config user.name "${{ github.actor }}"
           git config user.email "${{ github.actor }}@users.noreply.github.com"
@@ -147,7 +148,7 @@ jobs:
             exit 1
           fi
           
-          cd ./output || exit 1
+          cd "$OUTPUT_DIR" || exit 1
           test -f Country.mmdb || { echo "::error::Country.mmdb not found"; exit 1; }
           test -f Country-asn.mmdb || { echo "::error::Country-asn.mmdb not found"; exit 1; }
           test -f Country.mmdb.sha256sum || { echo "::error::Country.mmdb.sha256sum not found"; exit 1; }
