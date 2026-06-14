@@ -4,8 +4,8 @@
 
 ## Download
 
-- [GeoLite2-ASN.mmdb](https://github.com/ptokarevskiy/mmdb/releases/latest/download/Country-asn.mmdb)
 - [GeoLite2-Country.mmdb](https://github.com/ptokarevskiy/mmdb/releases/latest/download/Country.mmdb)
+- [GeoLite2-ASN.mmdb](https://github.com/ptokarevskiy/mmdb/releases/latest/download/Country-asn.mmdb)
 
 
 ## License
