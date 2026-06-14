@@ -1,0 +1,163 @@
+name: Publish GeoLite2 databases
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * 1"
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "assets/*"
+      - ".gitignore"
+      - "LICENSE*"
+      - "*.md"
+permissions:
+  contents: write
+env:
+  WORK_DIR: ${{ github.workspace }}/tmp
+  OUTPUT_DIR: ${{ github.workspace }}/output
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check secrets
+        run: |
+          if [ -z "${{ secrets.MAXMIND_LICENSE }}" ]; then
+            echo "::error::MAXMIND_LICENSE secret not configured"
+            exit 1
+          fi
+  build:
+    name: Build
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: ./go.mod
+
+      - name: Download GeoLite2 databases
+        env:
+          LICENSE_KEY: ${{ secrets.MAXMIND_LICENSE }}
+        run: |
+          set -euo pipefail
+          mkdir -p tmp
+          curl -sSfL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-ASN&license_key=${LICENSE_KEY}&suffix=tar.gz" -o ./tmp/GeoLite2-ASN.tar.gz
+          curl -sSfL "https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-Country&license_key=${LICENSE_KEY}&suffix=tar.gz" -o ./tmp/GeoLite2-Country.tar.gz
+
+      - name: Prepare GeoLite2 databases
+        run: |
+          cd ./tmp || exit 1
+          tar -xvzf GeoLite2-Country.tar.gz
+          tar -xvzf GeoLite2-ASN.tar.gz
+
+          cp GeoLite2-Country_*/*.mmdb ./output/Country.mmdb
+          cp GeoLite2-ASN_*/*.mmdb ./output/Country-asn.mmdb
+
+      - name: Verify mmdb files
+        run: |
+          cd ./output || exit 1
+          go install -v github.com/maxmind/mmdbverify@v1.0.0
+          for name in $(ls *.mmdb); do
+            $(go env GOPATH)/bin/mmdbverify -file ${name}
+          done
+
+      - name: Generate checksums
+        id: checksums
+        run: |
+          set -euo pipefail
+          cd ./output || exit 1
+          
+          sha256sum *.mmdb | tee $WORK_DIR/checksums.txt
+          
+          COUNTRY_HASH=$(grep Country.mmdb $WORK_DIR/checksums.txt | awk '{print $1}')
+          ASN_HASH=$(grep Country-asn.mmdb $WORK_DIR/checksums.txt | awk '{print $1}')
+
+          echo "${COUNTRY_HASH}  Country.mmdb" > Country.mmdb.sha256sum
+          echo "${ASN_HASH}  Country-asn.mmdb" > Country-asn.mmdb.sha256sum
+    
+          echo "country=${COUNTRY_HASH}" >> $GITHUB_OUTPUT
+          echo "asn=${ASN_HASH}" >> $GITHUB_OUTPUT
+    
+          echo "::notice::Checksums: country=${COUNTRY_HASH} | asn=${ASN_HASH}"
+
+      - name: Check for changes
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          SKIP_RELEASE="false"
+          
+          # Compare with latest release checksums
+          if gh release view --json tagName &>/dev/null; then
+            LATEST=$(gh release list --limit 1 --json tagName -q '.[0].tagName')
+            
+            # Download and extract previous checksums
+            if gh release download "$LATEST" --pattern "Country.mmdb.sha256sum" --dir /tmp 2>/dev/null; then
+              PREVIOUS_COUNTRY=$(cat /tmp/Country.mmdb.sha256sum | awk '{print $1}')
+              
+              if [[ "${{ steps.checksums.outputs.country }}" == "$PREVIOUS_COUNTRY" ]]; then
+                echo "::notice::No changes detected. Skipping release."
+                SKIP_RELEASE="true"
+              fi
+            fi
+          fi
+          
+          echo "skip_release=$SKIP_RELEASE" >> $GITHUB_OUTPUT
+
+      - name: Git push assets to "release" branch
+        if: steps.check.outputs.skip_release == 'false'
+        run: |
+          cd output || exit 1
+          git init
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
+          git checkout -b release
+          git add -A
+          git commit -m "${{ env.RELEASE_NAME }}"
+          git remote add mmdb "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}"
+          git push -f -u mmdb release
+
+      - name: Set release metadata
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="v$(date +%Y.%m.%d).$(git rev-parse --short HEAD)"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "::notice::Creating release: ${TAG}"
+
+      - name: Upload files to GitHub release
+        if: steps.check.outputs.skip_release == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          
+          if git rev-parse "${{ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::error::Tag ${{ steps.meta.outputs.tag }} already exists"
+            exit 1
+          fi
+          
+          cd ./output || exit 1
+          test -f Country.mmdb || { echo "::error::Country.mmdb not found"; exit 1; }
+          test -f Country-asn.mmdb || { echo "::error::Country-asn.mmdb not found"; exit 1; }
+          test -f Country.mmdb.sha256sum || { echo "::error::Country.mmdb.sha256sum not found"; exit 1; }
+          test -f Country-asn.mmdb.sha256sum || { echo "::error::Country-asn.mmdb.sha256sum not found"; exit 1; }
+          
+          gh release create "${{ steps.meta.outputs.tag }}" \
+            --title "${{ steps.meta.outputs.tag }}" \
+            --generate-notes \
+            Country.mmdb \
+            Country.mmdb.sha256sum \
+            Country-asn.mmdb \
+            Country-asn.mmdb.sha256sum
+          
+          echo "::notice::Release created successfully: ${{ steps.meta.outputs.tag }}"
