@@ -121,10 +121,10 @@ jobs:
         run: |
           set -euo pipefail
           RELEASE_NAME="v$(date +%Y.%m.%d)"
-          TAG="${RELEASE_NAME} $(git rev-parse --short HEAD)"
+          TAG="${RELEASE_NAME}.$(git rev-parse --short HEAD)"
           echo "name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "::notice::Creating release: ${TAG}"
+          echo "::notice::Creating release: ${RELEASE_NAME}"
 
       - name: Git push assets to "release" branch
         if: steps.check.outputs.skip_release == 'false'
@@ -158,7 +158,7 @@ jobs:
           test -f Country-asn.mmdb.sha256sum || { echo "::error::Country-asn.mmdb.sha256sum not found"; exit 1; }
           
           gh release create "${{ steps.meta.outputs.tag }}" \
-            --title "${{ steps.meta.outputs.tag }}" \
+            --title "${{ steps.meta.outputs.name }}" \
             --generate-notes \
             Country.mmdb \
             Country.mmdb.sha256sum \
